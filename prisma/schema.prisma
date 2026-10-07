@@ -1,0 +1,225 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =========================
+// ENUMS
+// =========================
+
+enum UserRole {
+  STAFF
+  HOD
+  STORES
+  AUDIT
+  FINANCE
+  ADMIN
+}
+
+enum RequisitionStatus {
+  DRAFT
+  SUBMITTED
+  HOD_APPROVED
+  AUDIT_CERTIFIED
+  FINANCE_APPROVED
+  ISSUED
+  COMPLETED
+  REJECTED
+}
+
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+enum AuditDecision {
+  CERTIFIED
+  REJECTED
+}
+
+enum FinanceDecision {
+  APPROVED
+  REJECTED
+}
+
+enum RequisitionAction {
+  CREATED
+  SUBMITTED
+  HOD_APPROVED
+  HOD_REJECTED
+  AUDIT_CERTIFIED
+  AUDIT_REJECTED
+  FINANCE_APPROVED
+  FINANCE_REJECTED
+  ISSUED
+  RECEIVED
+  COMPLETED
+  REJECTED
+}
+
+// =========================
+// 1. DEPARTMENT
+// =========================
+
+model Department {
+  id            String         @id @default(uuid()) @db.Uuid
+  name          String         @unique
+  users         User[]
+  requisitions  Requisition[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+// =========================
+// 2. USER
+// =========================
+
+model User {
+  id                  String                @id @default(uuid()) @db.Uuid
+  name                String
+  email               String                @unique
+  password            String
+  role                UserRole              @default(STAFF)
+  departmentId        String                @db.Uuid
+  department          Department            @relation(fields: [departmentId], references: [id])
+  createdRequisitions Requisition[]         @relation("CreatedRequisitions")
+  approvals           RequisitionApproval[]
+  auditVerifications  AuditVerification[]
+  financeApprovals    FinanceApproval[]
+  issuances            RequisitionIssuance[]
+  receipts             RequisitionReceipt[]
+  history              RequisitionHistory[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+}
+
+// =========================
+// 3. REQUISITION
+// =========================
+
+model Requisition {
+  id             String                @id @default(uuid()) @db.Uuid
+  requisitionNo  String                @unique
+  departmentId   String                @db.Uuid
+  createdById    String                @db.Uuid
+  date           DateTime
+  status         RequisitionStatus     @default(DRAFT)
+  department     Department             @relation(fields: [departmentId], references: [id])
+  createdBy      User                  @relation("CreatedRequisitions", fields: [createdById], references: [id])
+  items          RequisitionItem[]
+  approval       RequisitionApproval?
+  audit          AuditVerification?
+  finance        FinanceApproval?
+  issuance       RequisitionIssuance?
+  receipt        RequisitionReceipt?
+  history        RequisitionHistory[]
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+}
+
+// =========================
+// 4. REQUISITION ITEM
+// =========================
+
+model RequisitionItem {
+  id                String       @id @default(uuid()) @db.Uuid
+  requisitionId     String       @db.Uuid
+  description       String
+  quantityRequested Int
+  quantityIssued    Int?
+  unitCost          Decimal?     @db.Decimal(12, 2)
+  totalCost         Decimal?     @db.Decimal(12, 2)
+  requisition       Requisition  @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+}
+
+// =========================
+// 5. HOD APPROVAL
+// =========================
+
+model RequisitionApproval {
+  id            String          @id @default(uuid()) @db.Uuid
+  requisitionId String          @unique @db.Uuid
+  approvedById  String          @db.Uuid
+  decision      ApprovalDecision
+  comment       String?
+  approvedAt    DateTime        @default(now())
+  requisition   Requisition     @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  approvedBy    User            @relation(fields: [approvedById], references: [id])
+}
+
+// =========================
+// 6. INTERNAL AUDIT
+// =========================
+
+model AuditVerification {
+  id            String         @id @default(uuid()) @db.Uuid
+  requisitionId String         @unique @db.Uuid
+  auditorId     String         @db.Uuid
+  decision      AuditDecision
+  comment       String?
+  verifiedAt    DateTime       @default(now())
+  requisition   Requisition    @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  auditor       User           @relation(fields: [auditorId], references: [id])
+}
+
+// =========================
+// 7. FINANCE APPROVAL
+// =========================
+
+model FinanceApproval {
+  id            String          @id @default(uuid()) @db.Uuid
+  requisitionId String          @unique @db.Uuid
+  approvedById  String          @db.Uuid
+  decision      FinanceDecision
+  comment       String?
+  approvedAt    DateTime        @default(now())
+  requisition   Requisition     @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  approvedBy    User            @relation(fields: [approvedById], references: [id])
+}
+
+// =========================
+// 8. STORES ISSUANCE
+// =========================
+
+model RequisitionIssuance {
+  id            String       @id @default(uuid()) @db.Uuid
+  requisitionId String       @unique @db.Uuid
+  suppliedById  String       @db.Uuid
+  issuedAt      DateTime     @default(now())
+  requisition   Requisition  @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  suppliedBy    User         @relation(fields: [suppliedById], references: [id])
+}
+
+// =========================
+// 9. RECIPIENT RECEIPT
+// =========================
+
+model RequisitionReceipt {
+  id            String       @id @default(uuid()) @db.Uuid
+  requisitionId String       @unique @db.Uuid
+  recipientId   String       @db.Uuid
+  signature     String?
+  receivedAt    DateTime     @default(now())
+  requisition   Requisition  @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  recipient     User         @relation(fields: [recipientId], references: [id])
+}
+
+// =========================
+// 10. REQUISITION HISTORY
+// =========================
+
+model RequisitionHistory {
+  id            String             @id @default(uuid()) @db.Uuid
+  requisitionId String             @db.Uuid
+  performedById String             @db.Uuid
+  action        RequisitionAction
+  comment       String?
+  createdAt     DateTime           @default(now())
+  requisition   Requisition        @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  performedBy   User               @relation(fields: [performedById], references: [id])
+}
