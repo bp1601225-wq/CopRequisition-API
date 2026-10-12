@@ -1,32 +1,76 @@
-import type { NextFunction, Request, Response } from 'express';
 
-import { verifyToken } from '../utils/jwt.js';
-import { sendError } from '../utils/response.js';
+import type { Request, Response, NextFunction } from "express";
+import jwt from "jsonwebtoken";
 
-export const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
-  const authorizationHeader = req.headers.authorization;
-
-  if (!authorizationHeader || !authorizationHeader.startsWith('Bearer ')) {
-    return sendError(res, 'Authentication required', 401, ['Bearer token is missing']);
-  }
-
-  const token = authorizationHeader.split(' ')[1];
-
-  if (!token) {
-    return sendError(res, 'Authentication required', 401, ['Bearer token is missing']);
-  }
-
+export const authMiddleware = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
-    const decoded = verifyToken(token);
+    // 1. Get the Authorization header
+    const authorization = req.headers.authorization;
 
-    req.user = {
-      id: decoded.sub,
+    if (!authorization || !authorization.startsWith("Bearer ")) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
+
+    // 2. Extract the token
+    const token = authorization.split(" ")[1];
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: "Token is missing",
+      });
+    }
+
+    // 3. Check the JWT secret
+    const secret = process.env.JWT_SECRET;
+
+    if (!secret) {
+      return res.status(500).json({
+        success: false,
+        message: "Server authentication configuration error",
+      });
+    }
+
+    // 4. Verify the token
+    const decoded = jwt.verify(token, secret);
+
+
+
+console.log("DECODED TOKEN:", decoded);
+
+    // 5. Ensure the token contains the required user details
+    if (
+      typeof decoded === "string" ||
+      typeof decoded.id !== "string" ||
+      typeof decoded.email !== "string" ||
+      typeof decoded.role !== "string"
+    ) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid token payload",
+      });
+    }
+
+    // 6. Attach the verified user to the request
+    res.locals.user = {
+      id: decoded.id,
       email: decoded.email,
       role: decoded.role,
     };
 
-    return next();
+    // 7. Continue to the controller
+    next();
   } catch {
-    return sendError(res, 'Invalid or expired token', 401, ['Authentication failed']);
+    return res.status(401).json({
+      success: false,
+      message: "Invalid or expired token",
+    });
   }
 };

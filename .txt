@@ -1,0 +1,39 @@
+Dashboard
+My Requisitions
+Requisitions
+Pending Approvals
+Audit
+Finance
+Stores
+Departments
+Users
+Reports
+
+----------------
+Settings
+
+
+
+
+const startDate = ...
+const endDate = ...
+
+await prisma.model.findMany({
+  where: {
+    dateField: {
+      gte: startDate,
+      lte: endDate,
+    },
+  },
+})
+
+
+
+
+async CalculateStoreItems(requisitionId: string) {
+  // 1. Find requisition and its items
+  // 2. Validate the requisition's workflow status
+  // 3. Calculate quantities and costs
+  // 4. Save the calculated results
+  // 5. Return the results
+}

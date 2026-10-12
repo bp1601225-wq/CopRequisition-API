@@ -17,7 +17,7 @@ enum UserRole {
   AUDIT
   FINANCE
   ADMIN
-}
+} 
 
 enum RequisitionStatus {
   DRAFT
@@ -68,7 +68,7 @@ model Department {
   id            String         @id @default(uuid()) @db.Uuid
   name          String         @unique
   users         User[]
-  requisitions  Requisition[]
+  // requisitions  Requisition[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 }
@@ -79,12 +79,16 @@ model Department {
 
 model User {
   id                  String                @id @default(uuid()) @db.Uuid
-  name                String
+  firstname                String
+  middlename           String
+  lastname                String
+  phone                   String       @unique
+
   email               String                @unique
   password            String
   role                UserRole              @default(STAFF)
-  departmentId        String                @db.Uuid
-  department          Department            @relation(fields: [departmentId], references: [id])
+  departmentId        String?               @db.Uuid
+  department          Department?            @relation(fields: [departmentId], references: [id])
   createdRequisitions Requisition[]         @relation("CreatedRequisitions")
   approvals           RequisitionApproval[]
   auditVerifications  AuditVerification[]
@@ -103,13 +107,20 @@ model User {
 model Requisition {
   id             String                @id @default(uuid()) @db.Uuid
   requisitionNo  String                @unique
-  departmentId   String                @db.Uuid
+  // departmentId   String                @db.Uuid
   createdById    String                @db.Uuid
-  date           DateTime
+  date           DateTime       
   status         RequisitionStatus     @default(DRAFT)
-  department     Department             @relation(fields: [departmentId], references: [id])
-  createdBy      User                  @relation("CreatedRequisitions", fields: [createdById], references: [id])
+reason        String
+  // department     Department             @relation(fields: [departmentId], references: [id])
+
+
+  createdBy      User?                  @relation("CreatedRequisitions", fields: [createdById], references: [id])
+
+
   items          RequisitionItem[]
+
+
   approval       RequisitionApproval?
   audit          AuditVerification?
   finance        FinanceApproval?
@@ -128,10 +139,12 @@ model RequisitionItem {
   id                String       @id @default(uuid()) @db.Uuid
   requisitionId     String       @db.Uuid
   description       String
-  quantityRequested Int
-  quantityIssued    Int?
-  unitCost          Decimal?     @db.Decimal(12, 2)
-  totalCost         Decimal?     @db.Decimal(12, 2)
+  quantityRequested Int  //user requesting it
+  quantityIssued    Int?  //stores gives
+  unitCost          Decimal?     @db.Decimal(12, 2) //stores gives
+  totalCost         Decimal?     @db.Decimal(12, 2) // stores derives 
+
+  
   requisition       Requisition  @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
