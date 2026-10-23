@@ -29,7 +29,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use(AuthRoutes)
 
-// app.use(authMiddleware)
+app.use(authMiddleware)
 
 app.use(UserRouter)
 app.use(RequisitionRouter)

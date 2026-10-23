@@ -74,7 +74,7 @@ CREATE TABLE "RequisitionApproval" (
     "id" UUID NOT NULL,
     "requisitionId" UUID NOT NULL,
     "approvedById" UUID NOT NULL,
-    "decision" "ApprovalDecision" NOT NULL,
+    "decision" "ApprovalDecision" NOT NULL,use
     "comment" TEXT,
     "approvedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 

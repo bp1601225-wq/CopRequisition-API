@@ -2,17 +2,28 @@ import { Request, Response } from "express";
 import { UserService } from "../services/userService.js";
 import ResponseWork from "../handlers/Response.js";
 import { RequisitionService } from "../services/RequisitionService.js";
+import { RequisitionStatus } from "@prisma/client";
 
 export const RequisitionController = {
 
 async GetAllRequsitionController(req: Request, res: Response) {
   try {
+    const user = res.locals.user;
+
+    const statusParam = req.query.status;
+
+const status = typeof statusParam === "string"
+  ? statusParam.split(",") as RequisitionStatus[]
+  : undefined;
+
+console.log("Controller status:", status);
+
+    const data = await RequisitionService.GetAllRequisition(
+      user.id, status
+    );
 
 
-    // 3. Get all users
-    const data = await RequisitionService.GetAllRequisition()
 
-    // 4. Return the response
     return ResponseWork.SuccessResponse(
       200,
       "requisition loaded successfully",
@@ -21,6 +32,9 @@ async GetAllRequsitionController(req: Request, res: Response) {
     );
 
   } catch (error: any) {
+
+console.log(error)
+
     return ResponseWork.FailureResponse(
       500,
       error.message,
@@ -97,12 +111,13 @@ ResponseWork.SuccessResponse(200,
 async ApproveRequisitionController(req:Request, res:Response){
 
 try {
-const incomingData = req.body
 
-const {RequisitionId, hodId} = incomingData
+const user = res.locals.user
+
+const RequisitionId = req.params.id as string
 
 const Updated = await RequisitionService.ApproveRequisition(
-    RequisitionId, hodId
+    RequisitionId, user.id
 )
 
 ResponseWork.SuccessResponse(200,
@@ -134,67 +149,7 @@ const Updated = await RequisitionService.StoresOperation(
 )
 
 ResponseWork.SuccessResponse(200,
-    "Requsition Approved succesfully",
-    Updated,
-    res,
-)
-
-   } catch (error:any){
-    console.log(error)
-
-    ResponseWork.FailureResponse(500,
-        error.message,
-        res
-    )
-}
-
-},
-
-
-async AuditVerificationController(req:Request, res:Response){
-
-try {
-const incomingData = req.body
-
-const {RequisitionId, hodId} = incomingData
-
-
-const Updated = await RequisitionService.AuditVerification(
-    RequisitionId, hodId
-)
-
-ResponseWork.SuccessResponse(200,
-    "Auditor Approval succesfull",
-    Updated,
-    res,
-)
-
-   } catch (error:any){
-    console.log(error)
-
-    ResponseWork.FailureResponse(500,
-        error.message,
-        res
-    )
-}
-
-},
-
-
-async FinanceApprovalController(req:Request, res:Response){
-
-try {
-const incomingData = req.body
-
-const {RequisitionId, financeId} = incomingData
-
-
-const Updated = await RequisitionService.AuditVerification(
-    RequisitionId, financeId
-)
-
-ResponseWork.SuccessResponse(200,
-    "finance Approval succesfull",
+    "Stores Requisitions approved",
     Updated,
     res,
 )
@@ -212,7 +167,97 @@ ResponseWork.SuccessResponse(200,
 
 
 
+async AuditVerificationController(req: Request, res: Response) {
+  try {
+    const { RequisitionId, comment } = req.body;
+
+    const user = res.locals.user;
+    const auditorId = user.id;
+
+    const Updated = await RequisitionService.AuditVeriification(
+      RequisitionId,
+      auditorId,
+      comment
+    );
+
+    ResponseWork.SuccessResponse(
+      200,
+      "Audit verification completed successfully",
+      Updated,
+      res
+    );
+  } catch (error: any) {
+    console.log(error);
+
+    ResponseWork.FailureResponse(
+      500,
+      error.message,
+      res
+    );
+  }
+},
 
 
+// Finance 
+
+
+async FinanceApprovalController(req: Request, res: Response) {
+  try {
+    const { requisitionId, comment } = req.body;
+
+    const user = res.locals.user;
+    const approvedById = user.id;
+
+    const Updated = await RequisitionService.FinanceApproval(
+      requisitionId,
+      approvedById,
+      comment
+    );
+
+    ResponseWork.SuccessResponse(
+      200,
+      "Finace approval completed successfully",
+      Updated,
+      res
+    );
+  } catch (error: any) {
+    console.log(error);
+
+    ResponseWork.FailureResponse(
+      500,
+      error.message,
+      res
+    );
+  }
+},
+
+async ReccordIssuanceController(req: Request, res: Response) {
+  try {
+    const requisitionId = req.params.id as string;
+
+    const user = res.locals.user;
+    const suppliedById = user.id;
+
+    const Updated = await RequisitionService.RecordIssuance(
+      requisitionId,
+      suppliedById
+    );
+
+    ResponseWork.SuccessResponse(
+      200,
+      "Items issued out successfully",
+      Updated,
+      res
+    );
+  } catch (error: any) {
+    console.log(error);
+
+    ResponseWork.FailureResponse(
+      500,
+      error.message,
+      res
+    );
+  }
+}
 
 }

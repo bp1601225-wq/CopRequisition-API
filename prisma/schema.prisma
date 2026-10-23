@@ -17,6 +17,7 @@ enum UserRole {
   AUDIT
   FINANCE
   ADMIN
+  IT_ADMIN
 } 
 
 enum RequisitionStatus {
@@ -25,6 +26,7 @@ enum RequisitionStatus {
   HOD_APPROVED
   AUDIT_CERTIFIED
   FINANCE_APPROVED
+  STORES_COSTED
   ISSUED
   COMPLETED
   REJECTED
@@ -83,7 +85,6 @@ model User {
   middlename           String
   lastname                String
   phone                   String       @unique
-
   email               String                @unique
   password            String
   role                UserRole              @default(STAFF)
@@ -111,7 +112,7 @@ model Requisition {
   createdById    String                @db.Uuid
   date           DateTime       
   status         RequisitionStatus     @default(DRAFT)
-reason        String
+  reason        String
   // department     Department             @relation(fields: [departmentId], references: [id])
 
 
@@ -122,8 +123,8 @@ reason        String
 
 
   approval       RequisitionApproval?
-  audit          AuditVerification?
-  finance        FinanceApproval?
+  audit          AuditVerification[]
+  finance        FinanceApproval[]
   issuance       RequisitionIssuance?
   receipt        RequisitionReceipt?
   history        RequisitionHistory[]
@@ -171,7 +172,7 @@ model RequisitionApproval {
 
 model AuditVerification {
   id            String         @id @default(uuid()) @db.Uuid
-  requisitionId String         @unique @db.Uuid
+  requisitionId String         @db.Uuid
   auditorId     String         @db.Uuid
   decision      AuditDecision
   comment       String?
@@ -186,7 +187,7 @@ model AuditVerification {
 
 model FinanceApproval {
   id            String          @id @default(uuid()) @db.Uuid
-  requisitionId String          @unique @db.Uuid
+  requisitionId String           @db.Uuid
   approvedById  String          @db.Uuid
   decision      FinanceDecision
   comment       String?
@@ -207,6 +208,7 @@ model RequisitionIssuance {
   requisition   Requisition  @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
   suppliedBy    User         @relation(fields: [suppliedById], references: [id])
 }
+
 
 // =========================
 // 9. RECIPIENT RECEIPT

@@ -1,41 +1,105 @@
-import { Requisition, RequisitionItem } from '@prisma/client';
+import { Requisition, RequisitionItem, RequisitionStatus, UserRole } from '@prisma/client';
 import { prisma } from '../config/database.js';
 import dayjs from 'dayjs';
 
 export const RequisitionService = {
 
-async GetAllRequisition(){
-return prisma.requisition.findMany({
-  select:{
-    requisitionNo:true,
-    date:true,
-    status:true,
-    reason:true,
-    createdAt:true,
+async GetAllRequisition(id?: string, status?:RequisitionStatus[]) {
+  const user = await prisma.user.findUnique({
+    where: {
+      id,
+    },
+  });
 
-        items:{
-          select:{
-            description:true,
-            quantityRequested:true,
-            quantityIssued:true,
-            unitCost:true,
-            totalCost:true,
-          }
-        },
-
-        createdBy:{
-          select:{
-            firstname:true,
-            lastname:true,
-            middlename:true,
-          email:true,
-          phone:true
-          }
-        }
+  if (!user) {
+    throw new Error("User not found");
   }
-})
+
+  const userRole = user.role;
+
+
+
+const statuses = Array.isArray(status)
+  ? status : status ? [status] : undefined;
+
+
+  return prisma.requisition.findMany({
+
+where: {
+  ...(status && { status:{
+    in:statuses
+  }}),
+
+  ...(userRole === "STORES"
+    ? {
+        OR: [
+          { status: "HOD_APPROVED" },
+          { createdById: user.id },
+        ],
+      }
+
+    : userRole === "HOD"
+    
+    ? {
+        OR: [
+          { status: "SUBMITTED" },
+            { status: "HOD_APPROVED" },
+          { createdById: user.id },
+        ],
+      }
+
+
+
+       : userRole === "ADMIN"
+    
+    ? {
+        
+      }
+    
+      : {
+        createdById: user.id,
+      }
+    
+    ),
 },
 
+    select: {
+      id: true,
+      requisitionNo: true,
+      date: true,
+      status: true,
+      reason: true,
+      createdAt: true,
+
+      items: {
+        select: {
+          id: true,
+          description: true,
+          quantityRequested: true,
+          quantityIssued: true,
+          unitCost: true,
+          totalCost: true,
+        },
+      },
+
+      createdBy: {
+        select: {
+          firstname: true,
+          lastname: true,
+          middlename: true,
+          email: true,
+          phone: true,
+        },
+      },
+
+    },
+
+    orderBy:{
+
+    createdAt:"desc"
+    }
+  });
+},
 
 
 
@@ -145,13 +209,12 @@ async ApproveRequisition(RequisitionId: string, hodId: string) {
     where: { id: hodId },
   });
 
-  if (!hod || hod.role !== "HOD") {
-    throw new Error("Only an HOD can approve requisitions");
+  if (!hod || hod.role !== "HOD" && hod.role !== "ADMIN") {
+    throw new Error("Access Denied");
   }
 
   // 4. Save approval and update status together
   return prisma.$transaction(async (tx) => {
-
 
     await tx.requisitionApproval.create({
       data: {
@@ -166,19 +229,19 @@ async ApproveRequisition(RequisitionId: string, hodId: string) {
       where: { id: RequisitionId },
       data: {
         status: "HOD_APPROVED",
-      },
-      include: {
-        approval: {
-          include: {
-            approvedBy: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        },
-      },
+      }, 
+      // include: {
+      //   approval: {
+      //     include: {
+      //       approvedBy: {
+      //         select: {
+      //           id: true,
+      //           name: true,
+      //         },
+      //       },
+      //     },
+      //   },
+      // },
     });
   });
 },
@@ -279,12 +342,28 @@ return updatedData;
 
 },
 
+
+
+
+
+
+
+
+
+
 // Stores 
 async StoresOperation(data: any) {
-
   const { RequisitionId, items } = data;
 
-  // 1. Find the requisition and its items
+  // 1. Validate requisition ID
+  if (
+    typeof RequisitionId !== "string" ||
+    RequisitionId.trim() === ""
+  ) {
+    throw new Error("Please select a valid requisition");
+  }
+
+  // 2. Find requisition and its items
   const requisition = await prisma.requisition.findUnique({
     where: {
       id: RequisitionId,
@@ -298,46 +377,39 @@ async StoresOperation(data: any) {
     throw new Error("This requisition does not exist");
   }
 
-  // 2. Check requisition status
+  // 3. Check requisition status
   if (requisition.status !== "HOD_APPROVED") {
     throw new Error(
       "Only HOD-approved requisitions can be costed"
     );
   }
 
-  // 3. Check that items is a non-empty array
+  // 4. Check that items is a non-empty array
   if (!Array.isArray(items) || items.length === 0) {
-    throw new Error("At least one requisition item is required");
-  }
-
-  // 4. Validate each item's ID, quantity, and unit cost
-  const allItemsValid = items.every(
-    (item: any) =>
-      typeof item.id === "string" &&
-      item.id.trim().length > 0 &&
-      Number.isInteger(item.quantityIssued) &&
-      item.quantityIssued > 0 &&
-      typeof item.unitCost === "number" &&
-      Number.isFinite(item.unitCost) &&
-      item.unitCost >= 0
-  );
-
-  if (!allItemsValid) {
     throw new Error(
-      "Every item must have a valid ID, positive quantity issued, and valid unit cost"
+      "Please complete the costing for every item"
     );
   }
-
 
   // 5. Prevent duplicate item IDs
   const itemIds = items.map((item: any) => item.id);
 
   if (new Set(itemIds).size !== itemIds.length) {
-    throw new Error("Duplicate requisition items are not allowed");
+    throw new Error(
+      "Duplicate requisition items are not allowed"
+    );
   }
 
-  // 6. Check that items belong to this requisition
+  // 6. Ensure every requisition item is included
+  if (items.length !== requisition.items.length) {
+    throw new Error(
+      "Please complete the costing for every item"
+    );
+  }
+
+  // 7. Validate each item
   for (const item of items) {
+
     const existingItem = requisition.items.find(
       (requisitionItem) => requisitionItem.id === item.id
     );
@@ -348,245 +420,416 @@ async StoresOperation(data: any) {
       );
     }
 
-    if (item.quantityIssued > existingItem.quantityRequested) {
+    const quantityIssued = Number(item.quantityIssued);
+    const unitCost = Number(item.unitCost);
+
+    const IsValid =
+      typeof item.id === "string" &&
+
+      item.id.trim() !== "" &&
+
+      item.quantityIssued !== undefined &&
+
+      item.quantityIssued !== null &&
+
+      item.quantityIssued !== "" &&
+
+      Number.isInteger(quantityIssued) &&
+
+      quantityIssued >= 0 &&
+
+      quantityIssued <= existingItem.quantityRequested &&
+
+      item.unitCost !== undefined &&
+
+      item.unitCost !== null &&
+
+      item.unitCost !== "" &&
+
+      Number.isFinite(unitCost) &&
+
+      unitCost >= 0;
+
+    if (!IsValid) {
       throw new Error(
-        `Quantity cannot exceed requested quantity for ${existingItem.description}`
+        `Please enter a valid quantity and unit cost for ${existingItem.description}`
       );
     }
   }
 
-  // 7. Calculate and save costs
-  const updatedItems = await prisma.$transaction(
-    items.map((item: any) =>
-      prisma.requisitionItem.update({
+  await prisma.$transaction(async (tx) => {
+
+  // 1. Update each requisition item
+  const updatedItems = await Promise.all(
+    
+    items.map((item: any) => {
+      const quantityIssued = Number(item.quantityIssued);
+      const unitCost = Number(item.unitCost);
+
+      return tx.requisitionItem.update({
         where: {
           id: item.id,
         },
         data: {
-          quantityIssued: item.quantityIssued,
-          unitCost: item.unitCost,
-          totalCost: item.quantityIssued * item.unitCost,
+          quantityIssued,
+          unitCost,
+          totalCost: quantityIssued * unitCost,
         },
-      })
-    )
+      });
+    })
   );
 
-  // 8. Return the result without changing requisition status
-  return {
-    message: "Stores costing completed successfully",
-    requisitionId: RequisitionId,
-    items: updatedItems,
-  };
-},
-
-
-
-async AuditVerification(requisitionId: string, auditorId: string) {
-  // 1. Find the requisition and its items
-  const requisition = await prisma.requisition.findUnique({
-    where: { id: requisitionId },
-    include: {
-      items: true,
+  // 2. Update the requisition status
+  await tx.requisition.update({
+    where: {
+      id: RequisitionId,
     },
-  });
-
-  if (!requisition) {
-    throw new Error("Requisition does not exist");
-  }
-
-  // 2. Check the requisition status
-  if (requisition.status !== "HOD_APPROVED") {
-    throw new Error("Only HOD-approved requisitions can be audited");
-  }
-
-  // 3. Check the auditor
-  const auditor = await prisma.user.findUnique({
-    where: { id: auditorId },
-  });
-
-  if (!auditor || auditor.role !== "AUDIT") {
-    throw new Error("Only Internal Audit can verify requisitions");
-  }
-
-  // 4. Ensure the requisition has items
-  if (requisition.items.length === 0) {
-    throw new Error("Cannot verify a requisition without items");
-  }
-
-  // 5. Verify every item's cost
-const allItemsAreCorrect = requisition.items.every((item) => {
-  if (
-    item.quantityIssued == null ||
-    item.unitCost == null ||
-    item.totalCost == null
-  ) {
-    return false;
-  }
-
-  const expectedTotal = 
-    item.quantityIssued * Number(item.unitCost);
-
-  return expectedTotal === Number(item.totalCost);
-});
-
-if (!allItemsAreCorrect) {
-  await prisma.requisition.update({
-    where: { id: requisitionId },
     data: {
-      status: "REJECTED",
+      status: "STORES_COSTED", // Replace with the correct next status
     },
   });
 
-  throw new Error(
-    "Audit verification failed: incorrect or missing item costs"
-  );
-}
-  if (!allItemsAreCorrect) {
-
-
-
-    throw new Error("Audit verification failed: incorrect or missing item costs");
-
-    
-  }
-
-  // 6. Save the audit record and update the status together
-  return prisma.$transaction(async (tx) => {
-    await tx.auditVerification.create({
-      data: {
-        requisitionId,
-        auditorId,
-        decision: "CERTIFIED",
-      },
-    });
-
-    return tx.requisition.update({
-      where: { id: requisitionId },
-      data: {
-        status: "AUDIT_CERTIFIED",
-      },
-      // include: {
-      //   audit: {
-      //     include: {
-      //       auditor: {
-      //         select: {
-      //           id: true,
-      //           name: true,
-      //         },
-      //       },
-      //     },
-      //   },
-      //   items: true,
-      // },
-    });
-  });
+  return updatedItems;
+});
+  // 9. Return result without changing requisition status
+  // return {
+  //   message: "Stores costing completed successfully",
+  //   requisitionId: RequisitionId,
+  //   items: updatedItems,
+  // };
 },
 
 
+async AuditVeriification(requisitionId:string, auditorId:string, comment:string){
 
 
-async FinanceApproval(RequisitionId: string, financeId: string) {
-  // 1. Check whether the user exists and is Finance
-  const financeUser = await prisma.user.findUnique({
-    where: { id: financeId },
-  });
-
-  if (!financeUser || financeUser.role !== "FINANCE") {
-    throw new Error("Only Finance staff can approve requisitions");
-  }
-
-  // 2. Find the requisition and its items
   const requisition = await prisma.requisition.findUnique({
-    where: { id: RequisitionId },
-    include: {
-      items: true,
-      audit: true,
-    },
-  });
+    where:{
+      id:requisitionId
+    }, 
+    include:{
+      items:true
+    }
+  })
 
   if (!requisition) {
-    throw new Error("Requisition does not exist");
+    throw new Error ("This requisition does not exists")
   }
 
-  // 3. Only audit-certified requisitions can proceed to Finance
-  if (requisition.status !== "AUDIT_CERTIFIED") {
-    throw new Error(
-      "Only audit-certified requisitions can be reviewed by Finance"
-    );
+
+  if (requisition.status !== "STORES_COSTED"){
+    throw new Error ("This requisition is not available and cannot be verified by Audit. Kindly pass through the necessary validations")
   }
 
-  // 4. Confirm that Audit actually certified the requisition
-  if (
-    !requisition.audit ||
-    requisition.audit.decision !== "CERTIFIED"
-  ) {
-    throw new Error("Requisition has not been certified by Internal Audit");
+  const auditor = await prisma.user.findUnique({
+    where:{
+      id:auditorId
+    }
+  })
+
+  if (!auditor){
+    throw new Error ("There is no such auditor to perform this task on the requisition")
   }
 
-  // 5. Ensure the requisition contains items
-  if (requisition.items.length === 0) {
-    throw new Error("Cannot approve a requisition without items");
-  }
+  const isVerifiedAuditor = auditor.role
 
-  // 6. Ensure every item has valid costing details
-  const allItemsAreCorrect = requisition.items.every((item) => {
-    if (
-      item.quantityIssued == null ||
-      item.unitCost == null ||
-      item.totalCost == null
-    ) {
-      return false;
+  if (isVerifiedAuditor !== "AUDIT" && isVerifiedAuditor !== "ADMIN" ){
+    throw new Error ("Access denied, you do not have permission to perform this task !!!")
+  } else {
+
+
+    if (requisition.items.length == 0){
+      throw new Error("Requisition must contain at least one item")
     }
 
-    const expectedTotal =
-      item.quantityIssued * Number(item.unitCost);
+  const AllItemsAreCorrect = requisition.items.every(
+  (item: RequisitionItem) => {
+    const Calculated =
+      Number(item.quantityIssued) * Number(item.unitCost);
 
-    return expectedTotal === Number(item.totalCost);
-  });
-
-  if (!allItemsAreCorrect) {
-    throw new Error(
-      "Cannot approve: requisition contains incorrect or missing costing details"
+    return (
+      item.quantityIssued != null &&
+      item.unitCost != null &&
+      item.totalCost != null &&
+      Number(item.quantityIssued) > 0 &&
+      Number(item.unitCost) >= 0 &&
+      Calculated === Number(item.totalCost)
     );
   }
+);
 
-  // 7. Save Finance's approval and update the requisition together
-  return prisma.$transaction(async (tx) => {
-    await tx.financeApproval.create({
-      data: {
-        requisitionId: RequisitionId,
-        approvedById: financeId,
-        decision: "APPROVED",
-      },
-    });
 
-    // Finance approval sends the requisition back to Stores.
-    // It does not mean the items have been physically issued.
-    return tx.requisition.update({
-      where: { id: RequisitionId },
-      data: {
-        status: "FINANCE_APPROVED",
-      },
-      include: {
-        finance: {
-          include: {
-            approvedBy: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        },
-        items: true,
-      },
-    });
-  });
+    if (AllItemsAreCorrect){
+
+return prisma.$transaction(async (tx)=>{
+
+await tx.auditVerification.create({
+  data:{
+  requisitionId:requisitionId,
+  auditorId:auditorId,
+  decision:"CERTIFIED",
+  comment:comment
+  }   
+
+})
+
+
+await tx.requisition.update({
+  where:{
+    id:requisitionId
+  },
+  data:{
+    status:"AUDIT_CERTIFIED"
+  }
+})
+
+
+})
+
+    } else {
+      
+return prisma.$transaction(async (tx)=>{
+
+await tx.auditVerification.create({
+  data:{
+  requisitionId:requisitionId,
+  auditorId:auditorId,
+  decision:"REJECTED",
+  comment:comment
+  }   
+
+})
+
+
+await tx.requisition.update({
+  where:{
+    id:requisitionId
+  },
+  data:{
+    status:"REJECTED"
+  }
+})
+
+
+})
+
+    }
+
+
+
+
+
+
+
+
+  }
+
+ 
+
+
+
 },
 
 
 
+// Finance Approved
+async FinanceApproval(requisitionId:string, approvedById:string,
+  comment?:string
+ ) {
 
+const requisition = await prisma.requisition.findUnique({
+  where:{
+    id:requisitionId
+  },
+
+  include:{
+    items:true
+  }
+})
+
+
+if (!requisition){
+  throw new Error ("This requisition does not exists for an approval")
+}
+
+
+const user = await prisma.user.findUnique({
+  where:{
+    id:approvedById
+  }
+})
+
+if (!user){
+  throw new Error ("This user does not exist")
+}
+
+
+if (user.role !== "FINANCE" && user.role !== "ADMIN"){
+  throw new Error ("Access denied")
+}
+
+
+if (requisition.status !== "AUDIT_CERTIFIED"){
+  throw new Error ("This requisition is not certified by audit")
+}
+
+
+const items = requisition.items
+
+if (!items || items.length == 0 ){
+  throw new Error ("Requisition must contain value")
+}
+
+const IsAuditCertified = items.every((item: RequisitionItem) => {
+  return (
+    item.description !== "" &&
+    item.quantityIssued !== null &&
+    item.unitCost !== null &&
+    item.totalCost !== null &&
+    item.totalCost.toNumber() ===
+      item.quantityIssued * item.unitCost.toNumber()
+  );
+});
+
+
+if (!IsAuditCertified){
+throw new Error ("Invalid Configuration")
+} else {
+
+
+  return prisma.$transaction(async(tx)=>{
+
+
+    const updatedRequisition = await tx.requisition.update({
+      where:{
+        id:requisitionId
+      },
+
+      data:{
+        status:"FINANCE_APPROVED"
+      }
+    })
+
+
+    const FinanceApproved = await tx.financeApproval.create({
+data:{
+  requisitionId:requisitionId,
+  approvedById:approvedById,
+  decision:"APPROVED",
+  comment
+}
+
+    })
+
+return {
+  updatedRequisition,
+  FinanceApproved
+}
+
+  })
+}
+
+},
+
+async RecordIssuance(requisitionId:string, suppliedById:string){
+
+  const requisitions = await prisma.requisition.findUnique({
+    where:{
+      id:requisitionId
+    },
+    include:{
+      items:true
+    }
+  })
+
+
+  if (!requisitions){
+    throw new Error ("This does not exists")
+  }
+
+
+  const user = await prisma.user.findUnique({
+where:{
+  id:suppliedById
+}
+  })
+
+if (!user){
+throw new Error ("This user does not exist")
+}
+
+
+const userRole = user.role
+
+if (userRole !== "ADMIN" && userRole !== "STORES") {
+  throw new Error ("Access denied")
+} 
+
+
+if (requisitions.status !== "FINANCE_APPROVED"){
+  throw new Error ("This requisition has not reached the final stage")
+}
+
+
+const items:any[] = requisitions.items
+
+if (!Array.isArray(items) || items.length == 0){
+throw new Error ("Must be an Array")
+}
+
+const isAllItemsValid = items.every((item: RequisitionItem) => {
+  return (
+    item.description &&
+    item.quantityIssued != null &&
+    item.quantityIssued > 0 &&
+    item.unitCost != null &&
+    item.unitCost.toNumber() >= 0
+  );
+});
+
+
+if (!isAllItemsValid){
+  throw new Error ("Requisition contains invalid items")
+} else {
+
+
+
+console.log("Requisition ID:", requisitionId);
+console.log("Current status:", requisitions.status);
+
+
+return prisma.$transaction(async (tx)=>{
+
+const updatedRequisitions = await tx.requisition.update({
+  where:{
+    id:requisitionId
+  },
+
+  data:{
+    status:"COMPLETED"
+  }
+})
+
+const Issuances = await tx.requisitionIssuance.create({
+data:{
+  requisitionId:requisitionId,
+  suppliedById
+}
+})
+
+
+return {
+  updatedRequisitions,
+  Issuances
+}
+
+      })
+
+}
+
+
+      
+        },
 
 
 
@@ -613,15 +856,6 @@ async GetRequisitionHisotry(RequisitionId: string) {
     },
   });
 },
-
-
-
-
-
-
-
-
-
 
 }
 
