@@ -1,3 +1,4 @@
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -18,7 +19,12 @@ enum UserRole {
   FINANCE
   ADMIN
   IT_ADMIN
-} 
+}
+
+enum RequisitionTypes {
+  GENERAL
+  TONER
+}
 
 enum RequisitionStatus {
   DRAFT
@@ -30,6 +36,8 @@ enum RequisitionStatus {
   ISSUED
   COMPLETED
   REJECTED
+  AWAITING_IT_VERIFICATION
+  IT_VERIFIED
 }
 
 enum ApprovalDecision {
@@ -40,6 +48,14 @@ enum ApprovalDecision {
 enum AuditDecision {
   CERTIFIED
   REJECTED
+}
+
+
+
+enum ITDecision {
+  CERTIFIED
+  REJECTED
+
 }
 
 enum FinanceDecision {
@@ -60,6 +76,19 @@ enum RequisitionAction {
   RECEIVED
   COMPLETED
   REJECTED
+  EVIDENCE_REQUESTED
+  EVIDENCE_SUBMITTED
+  EVIDENCE_RECEIVED
+  EVIDENCE_ACCEPTED
+  EVIDENCE_REJECTED
+}
+
+enum EvidenceStatus {
+  REQUESTED
+  STAFF_SUBMITTED
+  RECEIVED
+  ACCEPTED
+  REJECTED
 }
 
 // =========================
@@ -67,12 +96,11 @@ enum RequisitionAction {
 // =========================
 
 model Department {
-  id            String         @id @default(uuid()) @db.Uuid
-  name          String         @unique
-  users         User[]
-  // requisitions  Requisition[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  users     User[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // =========================
@@ -80,25 +108,37 @@ model Department {
 // =========================
 
 model User {
-  id                  String                @id @default(uuid()) @db.Uuid
-  firstname                String
-  middlename           String
-  lastname                String
-  phone                   String       @unique
-  email               String                @unique
+  id                  String   @id @default(uuid()) @db.Uuid
+  EmployeeCode        String?  @unique
+  firstname           String
+  middlename          String
+  lastname            String
+  phone               String   @unique
+  email               String   @unique
   password            String
-  role                UserRole              @default(STAFF)
-  departmentId        String?               @db.Uuid
-  department          Department?            @relation(fields: [departmentId], references: [id])
-  createdRequisitions Requisition[]         @relation("CreatedRequisitions")
+  role                UserRole @default(STAFF)
+
+  departmentId        String?     @db.Uuid
+  department          Department? @relation(fields: [departmentId], references: [id])
+
+  createdRequisitions Requisition[]          @relation("CreatedRequisitions")
   approvals           RequisitionApproval[]
   auditVerifications  AuditVerification[]
+  IT  ITVerification[]
+
   financeApprovals    FinanceApproval[]
-  issuances            RequisitionIssuance[]
-  receipts             RequisitionReceipt[]
-  history              RequisitionHistory[]
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
+  issuances           RequisitionIssuance[]
+  receipts            RequisitionReceipt[]
+  history             RequisitionHistory[]
+
+  // Evidence request relations
+  evidenceRequestsCreated EvidenceRequest[] @relation("EvidenceRequestedBy")
+  evidenceSubmissions     EvidenceRequest[] @relation("EvidenceSubmittedBy")
+  evidenceReceipts        EvidenceRequest[] @relation("EvidenceReceivedBy")
+  evidenceReviews         EvidenceRequest[] @relation("EvidenceReviewedBy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // =========================
@@ -106,30 +146,34 @@ model User {
 // =========================
 
 model Requisition {
-  id             String                @id @default(uuid()) @db.Uuid
-  requisitionNo  String                @unique
-  // departmentId   String                @db.Uuid
-  createdById    String                @db.Uuid
-  date           DateTime       
-  status         RequisitionStatus     @default(DRAFT)
+  id            String           @id @default(uuid()) @db.Uuid
+  requisitionNo String           @unique
+  createdById   String           @db.Uuid
+  date          DateTime
+  status        RequisitionStatus @default(DRAFT)
   reason        String
-  // department     Department             @relation(fields: [departmentId], references: [id])
+  requisitionType RequisitionTypes?
 
+  createdBy User? @relation("CreatedRequisitions", fields: [createdById], references: [id])
 
-  createdBy      User?                  @relation("CreatedRequisitions", fields: [createdById], references: [id])
+  // Keep your existing notes field
+  notes String?
 
+  items RequisitionItem[]
 
-  items          RequisitionItem[]
+  approval RequisitionApproval?
+  audit    AuditVerification[]
+  IT ITVerification[]
+  finance  FinanceApproval[]
+  issuance RequisitionIssuance?
+  receipt  RequisitionReceipt?
+  history  RequisitionHistory[]
 
+  // New evidence requests relation
+  evidenceRequests EvidenceRequest[]
 
-  approval       RequisitionApproval?
-  audit          AuditVerification[]
-  finance        FinanceApproval[]
-  issuance       RequisitionIssuance?
-  receipt        RequisitionReceipt?
-  history        RequisitionHistory[]
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // =========================
@@ -137,18 +181,18 @@ model Requisition {
 // =========================
 
 model RequisitionItem {
-  id                String       @id @default(uuid()) @db.Uuid
-  requisitionId     String       @db.Uuid
+  id                String   @id @default(uuid()) @db.Uuid
+  requisitionId     String   @db.Uuid
   description       String
-  quantityRequested Int  //user requesting it
-  quantityIssued    Int?  //stores gives
-  unitCost          Decimal?     @db.Decimal(12, 2) //stores gives
-  totalCost         Decimal?     @db.Decimal(12, 2) // stores derives 
+  quantityRequested Int
+  quantityIssued    Int?
+  unitCost          Decimal? @db.Decimal(12, 2)
+  totalCost         Decimal? @db.Decimal(12, 2)
 
-  
-  requisition       Requisition  @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // =========================
@@ -156,14 +200,15 @@ model RequisitionItem {
 // =========================
 
 model RequisitionApproval {
-  id            String          @id @default(uuid()) @db.Uuid
-  requisitionId String          @unique @db.Uuid
-  approvedById  String          @db.Uuid
+  id            String           @id @default(uuid()) @db.Uuid
+  requisitionId String           @unique @db.Uuid
+  approvedById  String           @db.Uuid
   decision      ApprovalDecision
   comment       String?
-  approvedAt    DateTime        @default(now())
-  requisition   Requisition     @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  approvedBy    User            @relation(fields: [approvedById], references: [id])
+  approvedAt    DateTime         @default(now())
+
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  approvedBy  User        @relation(fields: [approvedById], references: [id])
 }
 
 // =========================
@@ -171,14 +216,30 @@ model RequisitionApproval {
 // =========================
 
 model AuditVerification {
-  id            String         @id @default(uuid()) @db.Uuid
-  requisitionId String         @db.Uuid
-  auditorId     String         @db.Uuid
+  id            String       @id @default(uuid()) @db.Uuid
+  requisitionId String       @db.Uuid
+  auditorId     String       @db.Uuid
   decision      AuditDecision
   comment       String?
-  verifiedAt    DateTime       @default(now())
-  requisition   Requisition    @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  auditor       User           @relation(fields: [auditorId], references: [id])
+  verifiedAt    DateTime     @default(now())
+
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  auditor     User        @relation(fields: [auditorId], references: [id])
+}
+
+
+
+
+model ITVerification {
+  id            String       @id @default(uuid()) @db.Uuid
+  requisitionId String       @db.Uuid
+  verifiedById     String       @db.Uuid
+  comment       String?
+  decision      ITDecision
+  verifiedAt    DateTime     @default(now())
+
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  IT     User        @relation(fields: [verifiedById], references: [id])
 }
 
 // =========================
@@ -186,14 +247,15 @@ model AuditVerification {
 // =========================
 
 model FinanceApproval {
-  id            String          @id @default(uuid()) @db.Uuid
-  requisitionId String           @db.Uuid
-  approvedById  String          @db.Uuid
+  id            String         @id @default(uuid()) @db.Uuid
+  requisitionId String         @db.Uuid
+  approvedById  String         @db.Uuid
   decision      FinanceDecision
   comment       String?
-  approvedAt    DateTime        @default(now())
-  requisition   Requisition     @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  approvedBy    User            @relation(fields: [approvedById], references: [id])
+  approvedAt    DateTime       @default(now())
+
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  approvedBy  User        @relation(fields: [approvedById], references: [id])
 }
 
 // =========================
@@ -201,27 +263,28 @@ model FinanceApproval {
 // =========================
 
 model RequisitionIssuance {
-  id            String       @id @default(uuid()) @db.Uuid
-  requisitionId String       @unique @db.Uuid
-  suppliedById  String       @db.Uuid
-  issuedAt      DateTime     @default(now())
-  requisition   Requisition  @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  suppliedBy    User         @relation(fields: [suppliedById], references: [id])
-}
+  id            String   @id @default(uuid()) @db.Uuid
+  requisitionId String   @unique @db.Uuid
+  suppliedById  String   @db.Uuid
+  issuedAt      DateTime @default(now())
 
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  suppliedBy  User        @relation(fields: [suppliedById], references: [id])
+}
 
 // =========================
 // 9. RECIPIENT RECEIPT
 // =========================
 
 model RequisitionReceipt {
-  id            String       @id @default(uuid()) @db.Uuid
-  requisitionId String       @unique @db.Uuid
-  recipientId   String       @db.Uuid
+  id            String   @id @default(uuid()) @db.Uuid
+  requisitionId String   @unique @db.Uuid
+  recipientId   String   @db.Uuid
   signature     String?
-  receivedAt    DateTime     @default(now())
-  requisition   Requisition  @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  recipient     User         @relation(fields: [recipientId], references: [id])
+  receivedAt    DateTime @default(now())
+
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  recipient   User        @relation(fields: [recipientId], references: [id])
 }
 
 // =========================
@@ -229,12 +292,54 @@ model RequisitionReceipt {
 // =========================
 
 model RequisitionHistory {
-  id            String             @id @default(uuid()) @db.Uuid
-  requisitionId String             @db.Uuid
-  performedById String             @db.Uuid
+  id            String           @id @default(uuid()) @db.Uuid
+  requisitionId String           @db.Uuid
+  performedById String           @db.Uuid
   action        RequisitionAction
   comment       String?
-  createdAt     DateTime           @default(now())
-  requisition   Requisition        @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
-  performedBy   User               @relation(fields: [performedById], references: [id])
+  createdAt     DateTime         @default(now())
+
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  performedBy User        @relation(fields: [performedById], references: [id])
+}
+
+// =========================
+// 11. EVIDENCE REQUEST
+// =========================
+
+model EvidenceRequest {
+  id            String @id @default(uuid()) @db.Uuid
+
+  // Requisition this evidence request belongs to
+  requisitionId String      @db.Uuid
+  requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+
+  // Admin's request
+  message       String
+  requestedById String   @db.Uuid
+  requestedBy   User     @relation("EvidenceRequestedBy", fields: [requestedById], references: [id])
+  requestedAt   DateTime @default(now())
+
+  // Current evidence workflow status
+  status EvidenceStatus @default(REQUESTED)
+
+  // Staff confirms physical submission
+  submittedById String?   @db.Uuid
+  submittedBy   User?     @relation("EvidenceSubmittedBy", fields: [submittedById], references: [id])
+  submissionNote String?
+  submittedAt    DateTime?
+
+  // Admin acknowledges physical receipt
+  receivedById String?   @db.Uuid
+  receivedBy   User?     @relation("EvidenceReceivedBy", fields: [receivedById], references: [id])
+  receivedAt    DateTime?
+
+  // Admin reviews the evidence
+  reviewedById String?   @db.Uuid
+  reviewedBy   User?     @relation("EvidenceReviewedBy", fields: [reviewedById], references: [id])
+  reviewNote   String?
+  reviewedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

@@ -1,6 +1,8 @@
 import { DEFAULT_MAX_VERSION } from 'node:tls';
 import { prisma } from '../config/database.js';
 import argon2 from "argon2"
+import { Prisma, User } from '@prisma/client';
+import { valid } from 'joi';
 
 
 export const UserService  = {
@@ -19,6 +21,7 @@ select:{
     email:true,
     role:true,
     phone:true,
+    password:true,
     
     department:{
         select:{
@@ -27,8 +30,14 @@ select:{
             updatedAt:true
         }
     },
+
+
     
-}       
+},
+
+orderBy:{
+    createdAt:"desc"
+}
     })
 },
 
@@ -66,60 +75,66 @@ async CreateUsers(data: any) {
 
 
 
-async UpdateUser(data:any){
 
+async UpdateUser(data: any) {
+  const {
+    id,
+    firstname,
+    middlename,
+    lastname,
+    phone,
+    email,
+    role,
+  } = data;
 
-const {id, firstname, middlename, lastname, phone, email, role} = data
+  // 1. Check whether the user exists
+  const user = await prisma.user.findUnique({
+    where: {
+      id,
+    },
+  });
 
-    const user = await prisma.user.findUnique({
-        where:{
-            id
-        }
-    })
+  if (!user) {
+    throw new Error("The user you are trying to update does not exist");
+  }
 
-       if (!user){
-        throw new Error ("The user you are trying to update does not exists")
-    }
+  // 2. Check whether another user already uses this email
+  const isFoundEmail = await prisma.user.findUnique({
+    where: {
+      email,
+    },
+  });
 
+  if (isFoundEmail && isFoundEmail.id !== id) {
+    throw new Error("Email already taken");
+  }
 
-       const isFoundEmail = await prisma.user.findUnique({
-        where:{
-            email:user.email
-        }
-    })
+  // 3. Check whether another user already uses this phone number
+  const isFoundPhone = await prisma.user.findUnique({
+    where: {
+      phone,
+    },
+  });
 
+  if (isFoundPhone && isFoundPhone.id !== id) {
+    throw new Error("Phone number already exists");
+  }
 
-    const isFoundPhone = await prisma.user.findUnique({
-       
-        where:{
-            phone:user.phone
-        }
-    })
-        if (isFoundEmail){
-            throw new Error ("Email alreaady taken")
-        }
-
-        if (isFoundPhone){
-            throw new Error ("Phone number already exists")
-        }
-
-
-return prisma.user.update({
-    where:{
-        id
-    }, 
-
-     data:{
-        firstname,
-        middlename,
-        lastname,
-        phone,
-        email,
-        role
-     }
-})
-
-        }, 
+  // 4. Update the user
+  return prisma.user.update({
+    where: {
+      id,
+    },
+    data: {
+      firstname,
+      middlename,
+      lastname,
+      phone,
+      email,
+      role,
+    },
+  });
+},
 
 async DeleteUser(id:string){
 
@@ -130,7 +145,35 @@ async DeleteUser(id:string){
     })
 
     
-}
+},
+
+
+//  Create Multiple users
+
+async UploadUsers(data: any[]) {
+
+  if (!Array.isArray(data) || data.length === 0 ){
+    throw new Error ("Cannot be an empty array")
+  }
+
+ const Users = await Promise.all(
+    data.map(async (user: any) => ({
+      ...user,
+      password: await argon2.hash(user.password),
+    }))
+  );
+
+
+  return prisma.user.createMany({
+  data: Users.map((user: any) => ({
+    ...user,
+    EmployeeCode: user.EmployeeCode?.trim(),
+  })),
+  skipDuplicates: true,
+});
+
+
 
 
 }
+    }

@@ -1,14 +1,18 @@
 import { Requisition, RequisitionItem, RequisitionStatus, UserRole } from '@prisma/client';
 import { prisma } from '../config/database.js';
 import dayjs from 'dayjs';
+import { FetchUtils } from '../SearchUtilities/SearchUtils.js';
 
 export const RequisitionService = {
 
-async GetAllRequisition(id?: string, status?:RequisitionStatus[]) {
+async GetAllRequisition(
+  id?: string,
+  search?: string,
+  status?: RequisitionStatus[],
+  dateRange?: string
+) {
   const user = await prisma.user.findUnique({
-    where: {
-      id,
-    },
+    where: { id },
   });
 
   if (!user) {
@@ -17,52 +21,71 @@ async GetAllRequisition(id?: string, status?:RequisitionStatus[]) {
 
   const userRole = user.role;
 
+  const statuses = Array.isArray(status)
+    ? status
+    : status
+      ? [status]
+      : undefined;
 
+  // Search through requisition number and related requester
+  const searchFilter =
+     FetchUtils.FetchRequiation_By_Date_Range_OR_Requester(search);
 
-const statuses = Array.isArray(status)
-  ? status : status ? [status] : undefined;
-
+const dateFilter = FetchUtils.FetchDateRange(dateRange);
 
   return prisma.requisition.findMany({
-
+    
 where: {
-  ...(status && { status:{
-    in:statuses
-  }}),
 
-  ...(userRole === "STORES"
-    ? {
-        OR: [
-          { status: "HOD_APPROVED" },
-          { createdById: user.id },
-        ],
-      }
+  
+  AND: [
+    // Search filter
+    FetchUtils.FetchRequiation_By_Date_Range_OR_Requester(search),
 
-    : userRole === "HOD"
-    
-    ? {
-        OR: [
-          { status: "SUBMITTED" },
+    // Status filter
+    ...(statuses?.length
+      ? [{ status: { in: statuses } }]
+      : []),
+
+    // Date range filter
+    FetchUtils.FetchDateRange(dateRange),
+
+    // Role-based filter
+    userRole === "STORES"
+      ? {
+          OR: [
             { status: "HOD_APPROVED" },
-          { createdById: user.id },
-        ],
-      }
-
-
-
-       : userRole === "ADMIN"
-    
-    ? {
-        
-      }
-    
-      : {
-        createdById: user.id,
-      }
-    
-    ),
+            { createdById: user.id },
+          ],
+        }
+      : userRole === "HOD"
+        ? {
+            OR: [
+              { status: "SUBMITTED" },
+              { status: "HOD_APPROVED" },
+              { createdById: user.id },
+            ],
+          }
+        : userRole === "AUDIT"
+          ? {
+              OR: [
+                { status: "STORES_COSTED" },
+                { createdById: user.id },
+              ],
+            }
+          : userRole === "FINANCE"
+            ? {
+                OR: [
+                  { status: "FINANCE_APPROVED" },
+                  { status: "AUDIT_CERTIFIED" },
+                  { createdById: user.id },
+                ],
+              }
+            : userRole === "ADMIN" || userRole === "IT_ADMIN"
+              ? {}
+              : { createdById: user.id },
+  ],
 },
-
     select: {
       id: true,
       requisitionNo: true,
@@ -70,6 +93,8 @@ where: {
       status: true,
       reason: true,
       createdAt: true,
+      requisitionType: true,
+      notes: true,
 
       items: {
         select: {
@@ -92,16 +117,20 @@ where: {
         },
       },
 
+      evidenceRequests: {
+        select: {
+          message: true,
+          submissionNote: true,
+          status: true,
+        },
+      },
     },
 
-    orderBy:{
-
-    createdAt:"desc"
-    }
+    orderBy: {
+      createdAt: "desc",
+    },
   });
 },
-
-
 
 
 
@@ -137,17 +166,11 @@ async CreateRequisition(data: any) {
     );
   }
 
-  // 4. Validate reason
-  if (
-    typeof data.reason !== "string" ||
-    data.reason.trim().length === 0
-  ) {
-    throw new Error("Requisition reason is required");
-  }
+
 
   // 5. Validate requisition date
   // if (!data.date || !dayjs(data.date).isValid()) {
-  //   throw new Error("A valid requisition date is required");
+  //   throw new Error("A valid requisition date is required");Crea
   // }
 
   const requisitionDate = dayjs(data.date);
@@ -155,6 +178,8 @@ async CreateRequisition(data: any) {
   if (!requisitionDate.isSame(dayjs(), "day")) {
     throw new Error("Requisition date must be today's date");
   }
+
+
 
   // 6. Generate requisition number
   const requisitionNumber = `REQ-${Date.now()}`;
@@ -164,6 +189,8 @@ async CreateRequisition(data: any) {
     user.role === "HOD" ? "HOD_APPROVED" : "SUBMITTED";
 
   // 8. Create requisition and items
+
+
   const requisitionCreated = await prisma.requisition.create({
     data: {
       requisitionNo: requisitionNumber,
@@ -189,6 +216,237 @@ async CreateRequisition(data: any) {
   return requisitionCreated;
 },
 
+
+//  Special requisition for toner
+async TonerRquisition(data: any,) {
+  // 1. Check if the user exists
+  const isFoundUser = await prisma.user.findUnique({
+    where: {
+      id: data.createdById,
+    },
+  });
+
+  if (!isFoundUser) {
+    throw new Error("User creating this requisition does not exist");
+  }
+
+  // 2. Validate requisition items
+  if (!Array.isArray(data.items) || data.items.length === 0) {
+    throw new Error("At least one requisition item is required");
+  }
+
+  // 3. Validate every item
+  const hasValidItems = data.items.every(
+    (item: RequisitionItem) =>
+      typeof item.description === "string" &&
+      item.description.trim().length > 0 &&
+      Number.isInteger(item.quantityRequested) &&
+      item.quantityRequested > 0
+  );
+
+  if (!hasValidItems) {
+    throw new Error(
+      "Every item must have a description and a positive whole-number quantity"
+    );
+  }
+
+  // 4. Validate reason
+  if (
+    typeof data.reason !== "string" ||
+    data.reason.trim().length === 0
+  ) {
+    throw new Error("Requisition reason is required");
+  }
+
+  // 5. Validate requisition date
+  const requisitionDate = dayjs(data.date);
+
+  if (
+    !requisitionDate.isValid() ||
+    !requisitionDate.isSame(dayjs(), "day")
+  ) {
+    throw new Error("Requisition date must be today's date");
+  }
+
+  // 6. Validate requisition type
+  if (data.requisitionType !== "TONER") {
+    throw new Error("Invalid requisition type");
+  }
+
+  // 7. Generate requisition number
+  const requisitionNumber = `REQ-${Date.now()}`;
+
+
+  // 8. Create toner requisition
+  const TonerRequest = await prisma.requisition.create({
+    data: {
+      requisitionNo: requisitionNumber,
+      createdById: isFoundUser.id,
+      date: requisitionDate.toDate(),
+      status: "AWAITING_IT_VERIFICATION",
+      requisitionType:"TONER",
+      reason: data.reason.trim(),
+
+      items: {
+        create: data.items.map((item: RequisitionItem) => ({
+          description: item.description.trim(),
+          quantityRequested: item.quantityRequested,
+        })),
+      },
+    },
+    
+    include: {
+      items: true,
+    },
+  });
+
+  // 9. Return the created requisition
+  return TonerRequest;
+},
+
+// Verify requisition by IT
+async ITVerification(data: any) {
+  // 1. Validate required data
+  if (!data.requisitionId) {
+    throw new Error("Requisition ID is required");
+  }
+
+  if (!data.verifiedById) {
+    throw new Error("IT verifier ID is required");
+  }
+
+  // 2. Check that the verifier exists
+  const isFoundUser = await prisma.user.findUnique({
+    where: {
+      id: data.verifiedById,
+    },
+    select: {
+      id: true,
+      role: true,
+    },
+  });
+
+  if (!isFoundUser) {
+    throw new Error("User verifying this requisition does not exist");
+  }
+
+  // 3. Check verifier role
+  if (
+    isFoundUser.role !== "ADMIN" &&
+    isFoundUser.role !== "IT_ADMIN"
+  ) {
+    throw new Error(
+      "Only an Admin or IT Admin can verify this requisition"
+    );
+  }
+
+  // 4. Check that the requisition exists
+  const requisition = await prisma.requisition.findUnique({
+    where: {
+      id: data.requisitionId,
+    },
+    select: {
+      id: true,
+      requisitionNo: true,
+      status: true,
+    },
+  });
+
+  if (!requisition) {
+    throw new Error("Requisition does not exist");
+  }
+
+  if (requisition.status === "IT_VERIFIED") {
+    throw new Error("This requisition has already been verified by IT");
+  }
+
+  // 5. Find the evidence request
+  const hasEvidence = await prisma.evidenceRequest.findFirst({
+    where: {
+      requisitionId: data.requisitionId,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    select: {
+      id: true,
+      status: true,
+      submissionNote: true,
+      submittedAt: true,
+    },
+  });
+
+  if (!hasEvidence) {
+    throw new Error("No evidence request exists for this requisition");
+  }
+
+  // 6. Allow REQUESTED or STAFF_SUBMITTED
+  if (
+    hasEvidence.status !== "REQUESTED" &&
+    hasEvidence.status !== "STAFF_SUBMITTED"
+  ) {
+    throw new Error(
+      `Cannot verify requisition because evidence status is "${hasEvidence.status}"`
+    );
+  }
+
+  // 7. Update evidence and requisition in one transaction
+  const result = await prisma.$transaction(async (tx) => {
+    // If evidence is still REQUESTED, change it to STAFF_SUBMITTED
+    const updatedEvidence =
+      hasEvidence.status === "REQUESTED"
+        ? await tx.evidenceRequest.update({
+            where: {
+              id: hasEvidence.id,
+            },
+            data: {
+              status: "STAFF_SUBMITTED",
+              submittedById: data.verifiedById,
+              submittedAt: new Date(),
+              submissionNote:
+                data.comment?.trim() ||
+                "Evidence submitted for IT verification",
+            },
+          })
+        : hasEvidence;
+
+    // Create IT verification record
+    const verificationRecord = await tx.iTVerification.create({
+      data: {
+        requisitionId: data.requisitionId,
+        verifiedById: data.verifiedById,
+        comment: data.comment?.trim() || null,
+        decision: "CERTIFIED",
+      },
+    });
+
+    // Update requisition status
+    const updatedRequest = await tx.requisition.update({
+      where: {
+        id: data.requisitionId,
+      },
+      data: {
+        status: "IT_VERIFIED",
+      },
+    });
+
+    return {
+      updatedEvidence,
+      verificationRecord,
+      updatedRequest,
+    };
+  });
+
+  // 8. Return all updated records
+  return {
+    message: "Evidence updated and requisition successfully verified by IT",
+    updatedEvidence: result.updatedEvidence,
+    verificationRecord: result.verificationRecord,
+    updatedRequest: result.updatedRequest,
+  };
+},
+
+
 async ApproveRequisition(RequisitionId: string, hodId: string) {
   // 1. Find the requisition
   const requisition = await prisma.requisition.findUnique({
@@ -213,7 +471,7 @@ async ApproveRequisition(RequisitionId: string, hodId: string) {
     throw new Error("Access Denied");
   }
 
-  // 4. Save approval and update status together
+  // 4. Save approval and status together
   return prisma.$transaction(async (tx) => {
 
     await tx.requisitionApproval.create({
@@ -246,10 +504,17 @@ async ApproveRequisition(RequisitionId: string, hodId: string) {
   });
 },
 
-async UpdateRequisition(data: any) {
-  const { RequisitionId, createdById, status, reason, items } = data;
 
-  // 1. Check if user exists
+async UpdateRequisition(data: any) {
+  const {
+    RequisitionId,
+    createdById,
+    reason,
+    items,
+    notes,
+  } = data;
+
+  // 1. Check if the user exists
   const user = await prisma.user.findUnique({
     where: {
       id: createdById,
@@ -257,10 +522,10 @@ async UpdateRequisition(data: any) {
   });
 
   if (!user) {
-    throw new Error('The user creating the requisition does not exist');
-  }  
+    throw new Error("User does not exist");
+  }
 
-  // 2. Check if requisition exists
+  // 2. Check if the requisition exists
   const requisition = await prisma.requisition.findUnique({
     where: {
       id: RequisitionId,
@@ -271,33 +536,63 @@ async UpdateRequisition(data: any) {
   });
 
   if (!requisition) {
-    throw new Error('This requisition does not exist');
+    throw new Error("This requisition does not exist");
   }
 
+  // 3. ADMIN and IT_ADMIN can request supporting evidence
+  if (user.role === "ADMIN" || user.role === "IT_ADMIN") {
+    if (typeof notes !== "string" || !notes.trim()) {
+      throw new Error("Please provide an evidence request message");
+    }
 
-if (requisition.createdById !== createdById) {
-  throw new Error("You cannot update another user's requisition");
-}
+    return prisma.$transaction(async (tx) => {
+      // Update the requisition's existing notes
+      const updatedRequisition = await tx.requisition.update({
+        where: {
+          id: RequisitionId,
+        },
+        data: {
+          notes: notes.trim(),
+        },
+        include: {
+          items: true,
+        },
+      });
 
+      // Create the evidence request record
+      const evidenceRequest = await tx.evidenceRequest.create({
+        data: {
+          message: notes.trim(),
+          requisitionId: RequisitionId,
+          requestedById: data.requestedById,
+          // status: "REQUESTED",
+        },
+      });
 
-if (requisition.status !== "DRAFT") {
-  throw new Error("Only draft requisitions can be updated");
-}
-
-  
-  // 3. Allow editing only while in DRAFT
-  if (requisition.status !== 'DRAFT') {
-    throw new Error('Only draft requisitions can be updated');
+      return {
+        ...updatedRequisition,
+        evidenceRequest,
+      };
+    });
   }
 
-  // 4. Validate items
+  // 4. Other users can only update their own DRAFT requisitions
+  if (requisition.createdById !== createdById) {
+    throw new Error("You cannot update another user's requisition");
+  }
+
+  if (requisition.status !== "DRAFT") {
+    throw new Error("Only draft requisitions can be updated");
+  }
+
+  // 5. Validate items
   if (!Array.isArray(items) || items.length === 0) {
-    throw new Error('At least one requisition item is required');
+    throw new Error("At least one requisition item is required");
   }
 
   const hasInvalidItems = items.some(
     (item: RequisitionItem) =>
-      typeof item.description !== 'string' ||
+      typeof item.description !== "string" ||
       item.description.trim().length === 0 ||
       !Number.isInteger(item.quantityRequested) ||
       item.quantityRequested <= 0
@@ -305,47 +600,103 @@ if (requisition.status !== "DRAFT") {
 
   if (hasInvalidItems) {
     throw new Error(
-      'Every item must have a description and a positive whole-number quantity'
+      "Every item must have a description and a positive whole-number quantity"
     );
   }
 
-  // 5. Validate reason
-  if (typeof reason !== 'string' || reason.trim().length === 0) {
-    throw new Error('Requisition reason is required for update');
+  // 6. Validate reason
+  if (typeof reason !== "string" || reason.trim().length === 0) {
+    throw new Error("Requisition reason is required for update");
   }
 
-  // 6. Update requisition and existing items
-const updatedData = await prisma.requisition.update({
-  where: {
-    id: RequisitionId,
-  },
-  data: {
-    reason: reason.trim(),
-    items: {
-      update: items.map((item: RequisitionItem) => ({
-        where: {
-          id: item.id,
+  // 7. Update the draft requisition
+  return prisma.$transaction(async (tx) => {
+    const updatedRequisition = await tx.requisition.update({
+      where: {
+        id: RequisitionId,
+      },
+      data: {
+        reason: reason.trim(),
+        items: {
+          update: items.map((item: RequisitionItem) => ({
+            where: {
+              id: item.id,
+            },
+            data: {
+              description: item.description.trim(),
+              quantityRequested: item.quantityRequested,
+            },
+          })),
         },
-        data: {
-          description: item.description.trim(),
-          quantityRequested: item.quantityRequested,
-        },
-      })),
-    },
-  },
-  include: {
-    items: true,
-  },
-});
+      },
+      include: {
+        items: true,
+      },
+    });
 
-return updatedData;
-
+    return updatedRequisition;
+  });
 },
 
 
+//  Submuttin an evidence
+async EvidenceSubmission(evidence: any) {
 
+console.log("Received evidence:", evidence);
+console.log("Received requisitionId:", evidence?.requisitionId);
 
+  const user = await prisma.user.findUnique({
+    where: {
+      id: evidence.submittedById,
+    },
+  });
 
+  if (!user) {
+    throw new Error("User does not exist");
+  }
+
+  const RequisitionId = evidence.requisitionId;
+
+  const foundRequisition = await prisma.requisition.findUnique({
+    where: {
+      id: RequisitionId,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!foundRequisition) {
+    throw new Error("This requisition does not exist");
+  }
+
+  if (evidence.status !== "STAFF_SUBMITTED") {
+    throw new Error("Evidence submission status does not match");
+  }
+
+  const foundEvidenceRequest = await prisma.evidenceRequest.findFirst({
+    where: {
+      requisitionId: foundRequisition.id,
+      status: "REQUESTED",
+    },
+  });
+
+  if (!foundEvidenceRequest) {
+    throw new Error("No pending evidence request found for this requisition");
+  }
+
+  return prisma.evidenceRequest.update({
+    where: {
+      id: foundEvidenceRequest.id,
+    },
+    data: {
+      status: "STAFF_SUBMITTED",
+      submittedById: evidence.submittedById,
+      submissionNote: evidence.submissionNote,
+      submittedAt: new Date(),
+    },
+  });
+},
 
 
 
@@ -378,9 +729,9 @@ async StoresOperation(data: any) {
   }
 
   // 3. Check requisition status
-  if (requisition.status !== "HOD_APPROVED") {
+  if (requisition.status !== "HOD_APPROVED" &&  requisition.status !== "IT_VERIFIED" ) {
     throw new Error(
-      "Only HOD-approved requisitions can be costed"
+      "Only HOD-approved or IT_Verifed requisitions can be costed"
     );
   }
 

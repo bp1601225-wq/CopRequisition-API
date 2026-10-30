@@ -1,6 +1,6 @@
 import { prisma } from '../config/database.js';
 
-async function ClearUsers() {
+async function ClearRequisitions() {
   try {
     const result = await prisma.requisition.deleteMany();
 
@@ -16,5 +16,5 @@ async function ClearUsers() {
 
 
 
-// npx tsx src/scripts/clearUsers.ts
-ClearUsers();
+// npx tsx src/scripts/clearRequisitions.ts
+ClearRequisitions();

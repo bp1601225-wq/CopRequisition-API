@@ -51,10 +51,15 @@ ResponseWork.FailureResponse(500,
 
   },
 
+
+
+  
 async UpdateUsers(req:Request, res:Response){
 
 try {
 const incomingData = req.body
+
+console.log(`incoming data is`, incomingData)
 
 const Updated = await UserService.UpdateUser(incomingData)
 
@@ -93,6 +98,33 @@ res.status(200).json({
         res
     )
 }
+},
+
+
+
+async UploadUsers(req: Request, res: Response) {
+  try {
+    const incomingData = req.body;
+
+console.log(incomingData)
+
+    const OutgoingData = await UserService.UploadUsers(incomingData);
+
+    ResponseWork.SuccessResponse(
+      201,
+      "Users uploaded successfully",
+      OutgoingData,
+      res
+    );
+  } catch (error: any) {
+    console.log(error);
+
+    ResponseWork.FailureResponse(
+      500,
+      error.message,
+      res
+    );
+  }
 }
 
 
